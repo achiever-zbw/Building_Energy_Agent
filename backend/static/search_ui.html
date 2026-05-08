@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>建筑能源运营查询台</title>
+  <style>
+    :root {
+      --bg: #f3f6fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --sub: #6b7280;
+      --line: #e5e7eb;
+      --primary: #2563eb;
+      --ok: #16a34a;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 20px; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .title { font-size: 24px; font-weight: 700; }
+    .sub { color: var(--sub); font-size: 13px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+    .filter { padding: 14px; margin-bottom: 14px; display: grid; grid-template-columns: 2fr 2fr 2fr 1fr auto; gap: 10px; align-items: end; }
+    .field label { display: block; font-size: 12px; color: var(--sub); margin-bottom: 6px; }
+    .field input { width: 100%; padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 8px; }
+    .quick { display: flex; gap: 8px; }
+    button { border: 0; padding: 9px 14px; border-radius: 8px; cursor: pointer; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-ghost { background: #eef2ff; color: #374151; }
+    .kpis { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; margin-bottom: 14px; }
+    .kpi { padding: 12px; }
+    .kpi .k { color: var(--sub); font-size: 12px; margin-bottom: 8px; }
+    .kpi .v { font-weight: 700; font-size: 22px; }
+    .kpi .u { color: var(--sub); font-size: 12px; margin-left: 4px; }
+    .panels { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 14px; }
+    .panel { padding: 12px; }
+    .panel h3 { margin: 0 0 10px; font-size: 15px; }
+    .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; color: var(--sub); font-size: 12px; }
+    .dot { display:inline-block; width:10px; height:10px; border-radius: 50%; margin-right: 6px; }
+    .table-card { padding: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 8px; white-space: nowrap; }
+    th { color: var(--sub); font-weight: 600; background: #fafafa; position: sticky; top: 0; }
+    .table-wrap { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+    .status { margin: 10px 0; font-size: 13px; color: var(--sub); }
+    .status.ok { color: var(--ok); }
+    .status.err { color: #dc2626; }
+    @media (max-width: 980px) {
+      .filter { grid-template-columns: 1fr; }
+      .kpis { grid-template-columns: 1fr 1fr; }
+      .panels { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <div class="title">建筑能源运营查询台</div>
+        <div class="sub">传统查询业务：时段汇总、年度强度、小时趋势（原生 JS）</div>
+      </div>
+    </div>
+
+    <div class="card filter">
+      <div class="field">
+        <label>建筑编号 building_id</label>
+        <input id="buildingId" value="BLDG_0001" />
+      </div>
+      <div class="field">
+        <label>开始时间（ISO8601）</label>
+        <input id="startTime" value="2026-03-01T00:00:00" />
+      </div>
+      <div class="field">
+        <label>结束时间（ISO8601）</label>
+        <input id="endTime" value="2026-03-02T00:00:00" />
+      </div>
+      <div class="field">
+        <label>年份</label>
+        <input id="yearVal" type="number" value="2025" />
+      </div>
+      <div class="quick">
+        <button class="btn-ghost" id="btnLast24h">近24小时</button>
+        <button class="btn-primary" id="btnQuery">执行查询</button>
+      </div>
+    </div>
+
+    <div id="status" class="status">待查询</div>
+
+    <div class="kpis">
+      <div class="card kpi"><div class="k">电能耗</div><div class="v" id="kpiEle">-<span class="u">kWh</span></div></div>
+      <div class="card kpi"><div class="k">冷冻水</div><div class="v" id="kpiChilled">-<span class="u">t</span></div></div>
+      <div class="card kpi"><div class="k">热水</div><div class="v" id="kpiHot">-<span class="u">t</span></div></div>
+      <div class="card kpi"><div class="k">水耗</div><div class="v" id="kpiWater">-<span class="u">m³</span></div></div>
+      <div class="card kpi"><div class="k">年度单位面积电耗</div><div class="v" id="kpiYearEle">-<span class="u">kWh/m²</span></div></div>
+    </div>
+
+    <div class="panels">
+      <div class="card panel">
+        <h3>小时趋势图</h3>
+        <canvas id="lineChart" width="860" height="300"></canvas>
+        <div class="legend">
+          <span><i class="dot" style="background:#2563eb"></i>electricity</span>
+          <span><i class="dot" style="background:#16a34a"></i>chilledwater</span>
+          <span><i class="dot" style="background:#f59e0b"></i>hotwater</span>
+          <span><i class="dot" style="background:#7c3aed"></i>water</span>
+        </div>
+      </div>
+      <div class="card panel">
+        <h3>分项占比</h3>
+        <canvas id="barChart" width="380" height="300"></canvas>
+      </div>
+    </div>
+
+    <div class="card table-card">
+      <h3 style="margin:0 0 10px;font-size:15px;">小时明细</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>hour</th>
+              <th>electricity</th>
+              <th>chilledwater</th>
+              <th>hotwater</th>
+              <th>water</th>
+            </tr>
+          </thead>
+          <tbody id="tbBody">
+            <tr><td colspan="5" style="color:#6b7280;">暂无数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const ids = {
+      buildingId: document.getElementById("buildingId"),
+      startTime: document.getElementById("startTime"),
+      endTime: document.getElementById("endTime"),
+      yearVal: document.getElementById("yearVal"),
+    };
+
+    function setStatus(msg, type) {
+      statusEl.textContent = msg;
+      statusEl.className = "status" + (type ? (" " + type) : "");
+    }
+
+    function fmt(v) {
+      if (v === null || v === undefined || Number.isNaN(Number(v))) return "-";
+      return Number(v).toFixed(2);
+    }
+
+    async function postJSON(url, body) {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || JSON.stringify(data));
+      if (data.error) throw new Error(data.detail || data.error);
+      return data;
+    }
+
+    function drawLineChart(series) {
+      const cvs = document.getElementById("lineChart");
+      const ctx = cvs.getContext("2d");
+      const W = cvs.width, H = cvs.height;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+
+      if (!series.length) return;
+      const keys = ["electricity", "chilledwater", "hotwater", "water"];
+      const colors = { electricity:"#2563eb", chilledwater:"#16a34a", hotwater:"#f59e0b", water:"#7c3aed" };
+      const allVals = series.flatMap(s => keys.map(k => Number(s[k] || 0)));
+      const max = Math.max(...allVals, 1);
+      const pad = { l: 40, r: 20, t: 20, b: 30 };
+      const pw = W - pad.l - pad.r;
+      const ph = H - pad.t - pad.b;
+
+      ctx.strokeStyle = "#e5e7eb";
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.t + (ph * i / 4);
+        ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+      }
+      ctx.fillStyle = "#6b7280";
+      ctx.font = "11px sans-serif";
+      ctx.fillText("0", 10, H - pad.b + 4);
+      ctx.fillText(max.toFixed(1), 10, pad.t + 4);
+
+      keys.forEach(k => {
+        ctx.strokeStyle = colors[k];
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        series.forEach((s, i) => {
+          const x = pad.l + (pw * (series.length === 1 ? 0 : i / (series.length - 1)));
+          const y = pad.t + ph - (Number(s[k] || 0) / max) * ph;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      });
+    }
+
+    function drawBarChart(sumObj) {
+      const cvs = document.getElementById("barChart");
+      const ctx = cvs.getContext("2d");
+      const W = cvs.width, H = cvs.height;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+
+      const items = [
+        ["electricity", Number(sumObj.electricity || 0), "#2563eb"],
+        ["chilledwater", Number(sumObj.chilledwater || 0), "#16a34a"],
+        ["hotwater", Number(sumObj.hotwater || 0), "#f59e0b"],
+        ["water", Number(sumObj.water || 0), "#7c3aed"],
+      ];
+      const max = Math.max(...items.map(i => i[1]), 1);
+      const left = 90, top = 25, bw = W - left - 20, h = 44;
+      ctx.font = "12px sans-serif";
+      items.forEach((it, idx) => {
+        const y = top + idx * 64;
+        const w = (it[1] / max) * bw;
+        ctx.fillStyle = "#6b7280"; ctx.fillText(it[0], 8, y + 18);
+        ctx.fillStyle = it[2]; ctx.fillRect(left, y, w, h);
+        ctx.fillStyle = "#111827"; ctx.fillText(it[1].toFixed(2), left + w + 8, y + 24);
+      });
+    }
+
+    function renderTable(series) {
+      const tbody = document.getElementById("tbBody");
+      if (!series.length) {
+        tbody.innerHTML = '<tr><td colspan="5" style="color:#6b7280;">暂无数据</td></tr>';
+        return;
+      }
+      tbody.innerHTML = series.map(r => `
+        <tr>
+          <td>${r.hour || ""}</td>
+          <td>${fmt(r.electricity)}</td>
+          <td>${fmt(r.chilledwater)}</td>
+          <td>${fmt(r.hotwater)}</td>
+          <td>${fmt(r.water)}</td>
+        </tr>
+      `).join("");
+    }
+
+    async function runQuery() {
+      const building_id = ids.buildingId.value.trim();
+      const start_time = ids.startTime.value.trim();
+      const end_time = ids.endTime.value.trim();
+      const year = Number(ids.yearVal.value);
+      if (!building_id || !start_time || !end_time || !year) {
+        setStatus("请完整填写查询条件", "err");
+        return;
+      }
+      try {
+        setStatus("查询中...", "");
+        const [sumRes, yearRes, hourRes] = await Promise.all([
+          postJSON("/api/v1/search/building_time_energy", { building_id, start_time, end_time }),
+          postJSON("/api/v1/search/building_year_energy", { building_id, year }),
+          postJSON("/api/v1/search/building_time_energy_by_hour", { building_id, start_time, end_time }),
+        ]);
+
+        document.getElementById("kpiEle").innerHTML = `${fmt(sumRes.electricity)}<span class="u">kWh</span>`;
+        document.getElementById("kpiChilled").innerHTML = `${fmt(sumRes.chilledwater)}<span class="u">t</span>`;
+        document.getElementById("kpiHot").innerHTML = `${fmt(sumRes.hotwater)}<span class="u">t</span>`;
+        document.getElementById("kpiWater").innerHTML = `${fmt(sumRes.water)}<span class="u">m³</span>`;
+        document.getElementById("kpiYearEle").innerHTML = `${fmt(yearRes.electricity)}<span class="u">kWh/m²</span>`;
+
+        const series = Array.isArray(hourRes.series) ? hourRes.series : [];
+        drawLineChart(series);
+        drawBarChart(sumRes);
+        renderTable(series);
+        setStatus(`查询完成：${building_id}，共 ${series.length} 个小时点`, "ok");
+      } catch (e) {
+        setStatus("查询失败：" + e.message, "err");
+      }
+    }
+
+    function setLast24h() {
+      const now = new Date();
+      const past = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      ids.endTime.value = now.toISOString().slice(0, 19);
+      ids.startTime.value = past.toISOString().slice(0, 19);
+    }
+
+    document.getElementById("btnQuery").addEventListener("click", runQuery);
+    document.getElementById("btnLast24h").addEventListener("click", setLast24h);
+  </script>
+</body>
+</html>
