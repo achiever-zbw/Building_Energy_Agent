@@ -1,3 +1,4 @@
+import asyncio
 import os
 import warnings
 from contextlib import asynccontextmanager
@@ -10,7 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.agent.loop import AgentLoop
 from backend.agent.providers.openai_provider import OpenAIProvider
 from backend.agent.tools.tools import build_default_tool_registry
-from backend.utils.helpers import ensure_dir
+from backend.agent.dream_scheduler import cancel_task, spawn_dream_scheduler
+from backend.utils.helpers import ensure_dir, openai_compatible_model_from_env
 from db.session import async_engine
 import models.energy
 import models.building
@@ -36,7 +38,7 @@ async def lifespan(app: FastAPI):
 
     api_key = os.environ.get("OPENAI_API_KEY")
     api_base = os.environ.get("OPENAI_API_BASE")
-    model = os.environ.get("OPENAI_MODEL")
+    model = openai_compatible_model_from_env()
 
     if api_key:
         provider = OpenAIProvider(
@@ -49,11 +51,17 @@ async def lifespan(app: FastAPI):
             workspace=workspace,
             tools=build_default_tool_registry(),
         )
+        dream_task = spawn_dream_scheduler(app.state.agent_loop)
+        app.state.dream_task = dream_task
     else:
         app.state.agent_loop = None
+        app.state.dream_task = None
         warnings.warn("未设置 OPENAI_API_KEY  POST /api/v1/chat 将返回 503")
 
-    yield
+    try:
+        yield
+    finally:
+        await cancel_task(getattr(app.state, "dream_task", None))
 
 
 app = FastAPI(

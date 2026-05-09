@@ -16,6 +16,7 @@ from backend.agent.runner import AgentRunner
 from backend.agent.schemas import AgentRunResult, AgentRunSpec
 from backend.agent.message_dump import log_agent_messages_block
 from backend.agent.tools.registry import ToolRegistry
+from backend.agent.dream_scheduler import run_chat_triggered_dream_if_needed
 from backend.utils.helpers import strip_think
 
 
@@ -338,6 +339,11 @@ class AgentLoop:
                     mem.append_history(result.final_content)
             except Exception:
                 logger.exception("写入 history.jsonl 失败，已忽略")
+            else:
+                try:
+                    await run_chat_triggered_dream_if_needed(self, user_message)
+                except Exception:
+                    logger.exception("Dream 对话触发整理失败，已忽略")
         return result
 
     @property

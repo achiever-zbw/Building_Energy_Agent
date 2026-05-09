@@ -1,16 +1,21 @@
+import os
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator
-from backend.utils.helpers import ensure_dir
+from typing import Any, Iterator
+
 from contextlib import suppress
 import json
+
 from loguru import logger
-from backend.utils.helpers import strip_think
+
+from backend.utils.helpers import ensure_dir, strip_think, truncate_text
+
+_HISTORY_ENTRY_HARD_CAP = 64_000
 
 
 class MemoryStore:
 
-    _DEFAULT_MAX_HISTORY= 1000
+    _DEFAULT_MAX_HISTORY = 1000
 
     def __init__(self, workspace: Path, max_history_entries: int = _DEFAULT_MAX_HISTORY) :
         self.workspace = workspace
@@ -21,7 +26,11 @@ class MemoryStore:
         self.legacy_history_file = self.memory_dir / "HISTORY.md"
         self.soul_file = workspace / "SOUL.md"                      # Agent 的长期风格、原则
         self.user_file = workspace / "USER.md"                      # 用户偏好风格
-        self._cursor_file = self.memory_dir / ".cursor"
+        # history.jsonl 游标（勿使用名为 ``.cursor`` 的文件，部分环境会禁止写入）
+        self._cursor_file = self.memory_dir / ".history_jsonl_cursor"
+        self._dream_cursor_file = self.memory_dir / ".dream_cursor"
+        self._corruption_logged = False
+        self._oversize_logged = False
 
     @staticmethod
     def read_file(path: Path) -> str:
@@ -52,11 +61,21 @@ class MemoryStore:
         self.user_file.write_text(content, encoding="utf-8")
 
     # --- 历史记录 jsonl
-    def append_history(self, entry: str) -> int:
+    def append_history(self, entry: str, *, max_chars: int | None = None) -> int:
+        limit = max_chars if max_chars is not None else _HISTORY_ENTRY_HARD_CAP
         # 获取下一个 cursor
         cursor = self._next_cursor()
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
         raw = entry.rstrip()
+        if len(raw) > limit:
+            if not self._oversize_logged:
+                self._oversize_logged = True
+                logger.warning(
+                    "history entry exceeds {} chars ({}); truncating",
+                    limit,
+                    len(raw),
+                )
+            raw = truncate_text(raw, limit)
         # 清洗后的内容
         content = strip_think(raw)
 
@@ -82,8 +101,8 @@ class MemoryStore:
 
     def _next_cursor(self) -> int:
         """ 获取下一个 cursor
-        1. 最快 : 直接读取 .cursor
-        2. .cursor 不能使用，可以读取最后一条 history 信息的 cursor 再 + 1
+        1. 最快 : 直接读取 ``.history_jsonl_cursor``
+        2. 游标文件不可用：读取最后一条 history 信息的 cursor 再 + 1
         3. 都不行，遍历所有有效记录找到最大的 cursor + 1
         """
         # 优先读 cursor 文件
@@ -142,7 +161,54 @@ class MemoryStore:
                 poisoned = raw
                 continue
             yield entry, cursor
+        if poisoned is not None and not self._corruption_logged:
+            self._corruption_logged = True
+            logger.warning(
+                "history.jsonl contains non-int cursor ({!r}); skipping those lines",
+                poisoned,
+            )
 
+    def read_unprocessed_history(self, since_cursor: int) -> list[dict[str, Any]]:
+        """cursor 大于 since_cursor 的条目（供 Dream 批次处理）。"""
+        return [e for e, c in self._iter_valid_entries() if c > since_cursor]
+
+    def get_last_dream_cursor(self) -> int:
+        if self._dream_cursor_file.exists():
+            with suppress(ValueError, OSError):
+                return int(self._dream_cursor_file.read_text(encoding="utf-8").strip())
+        return 0
+
+    def set_last_dream_cursor(self, cursor: int) -> None:
+        self._dream_cursor_file.write_text(str(int(cursor)), encoding="utf-8")
+
+    def compact_history(self) -> None:
+        """超过 max_history_entries 时丢弃最旧条目并重写 jsonl。"""
+        if self.max_history_entries <= 0:
+            return
+        entries = self._read_entries()
+        if len(entries) <= self.max_history_entries:
+            return
+        kept = entries[-self.max_history_entries :]
+        self._write_entries(kept)
+
+    def _write_entries(self, entries: list[dict[str, Any]]) -> None:
+        tmp_path = self.history_file.with_suffix(self.history_file.suffix + ".tmp")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                for entry in entries:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.history_file)
+            with suppress(PermissionError):
+                fd = os.open(str(self.history_file.parent), os.O_RDONLY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
     def _read_entries(self) -> list[dict[str, Any]]:
         """ 从 history.jsonl 中读取所有历史信息 """

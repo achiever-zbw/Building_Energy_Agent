@@ -1,6 +1,6 @@
 # Agent 工作说明（建筑能源）
 
-参考 nanobot 的「Agent Instructions」思路：这里是 **流程与约束**，具体工具签名由系统自动注入，无需背诵 JSON Schema。
+
 
 ## 典型对话流程
 

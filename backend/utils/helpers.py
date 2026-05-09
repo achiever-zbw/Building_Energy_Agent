@@ -1,5 +1,6 @@
 """Utility functions for nanobot."""
 
+import os
 import base64
 import json
 import re
@@ -13,6 +14,12 @@ from typing import Any
 
 import tiktoken
 from loguru import logger
+
+
+def openai_compatible_model_from_env() -> str | None:
+    """读取 Chat 模型名：兼容 ``OPENAI_MODEL`` 与 ``OPENAI_API_MODEL``。"""
+    raw = (os.getenv("OPENAI_MODEL") or os.getenv("OPENAI_API_MODEL") or "").strip()
+    return raw or None
 
 
 def strip_think(text: str) -> str:

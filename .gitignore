@@ -52,7 +52,7 @@ htmlcov/
 # backend 内运行时状态（会话流水号等）
 # -----------------------------------------------------------------------------
 backend/workspace/memory/history.jsonl
-backend/workspace/memory/.cursor
+backend/workspace/memory/.history_jsonl_cursor
 
 # =============================================================================
 # 历史：曾单独忽略的 vendored/实验目录（已被「只保留 backend」覆盖）
